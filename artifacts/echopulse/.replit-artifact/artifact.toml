@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "EchoPulse"
+version = "1.0.0"
+id = "artifacts/echopulse"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23685
+
+[services.development]
+run = "pnpm --filter @workspace/echopulse run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/echopulse", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/echopulse/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23685"
+BASE_PATH = "/"

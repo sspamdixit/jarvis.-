@@ -1,0 +1,48 @@
+Build a complete, full-stack voice assistant app called "EchoPulse". It must be ultra-lightweight, low-CPU, and designed to route simple commands locally (0% LLM cost) while falling back to Gemini AI for complex queries.
+
+### Tech Stack & Core Rules
+- Backend: Python (Flask or FastAPI)
+- Database: SQLite (`assistant.db`)
+- AI SDK: `google-genai` (Gemini 2.5 Flash API)
+- Frontend: HTML5 + Tailwind CSS + Vanilla JS (Web Speech API + Web Audio API)
+
+---
+
+### Core Requirements & Features
+
+1. Local Intent Router ("Dumb & Fast Path" - 0% CPU/LLM Overhead):
+   - Intercept incoming audio transcripts in Python BEFORE sending anything to Gemini.
+   - Use Regex / String matching for instant, offline-capable command handling:
+     * Music: Matches "play [artist/song]" -> routes to Spotify/YouTube Music mock/service handlers.
+     * Tasks: Matches "add [task] to list", "show tasks", "complete [task]" -> handles directly via SQLite.
+     * Utilities: Matches "time", "date", "volume [level]", "clear screen".
+   - If a command matches a local regex pattern, execute it immediately and return JSON response: `{ source: "local_router", reply: "..." }`.
+
+2. Gemini Fallback ("Smart Path"):
+   - ONLY triggered if the Local Intent Router fails to find a regex pattern match.
+   - Passes the query to Gemini 2.5 Flash using `google-genai`.
+   - Uses system instructions to inject user preferences (learned from the DB) into the Gemini context.
+   - Returns `{ source: "gemini_api", reply: "..." }`.
+
+3. Pattern Learning & Preference Engine:
+   - SQLite DB tables: `tasks`, `preferences`, `command_logs`.
+   - Track platform choices over time (e.g., if user frequently specifies "on Spotify", update preference for music category to Spotify).
+   - Dynamically load current top preferences into Gemini system context at runtime.
+
+4. Browser Frontend (Always-Listening Cyberpunk/Minimalist Dashboard):
+   - Responsive dark-mode UI with a glowing audio visualizer pulse ring.
+   - Web Speech API continuous listening loop with auto-restart on speech pause.
+   - Status indicators: "Listening...", "Matched Locally (0ms)", "Thinking (Gemini Cloud)", "Speaking".
+   - Displays real-time task manager board and recent command history log.
+   - Speaks responses using native browser SpeechSynthesis API.
+
+---
+
+### File Structure to Create
+1. `main.py` (or `app.py`): Server entry point, API routes (`/api/command`, `/api/tasks`, `/api/stats`).
+2. `router.py`: High-speed Regex pattern matching engine.
+3. `gemini_client.py`: Gemini API client using `google-genai` with fallback error handling if API key is missing.
+4. `memory.py`: SQLite database helper and pattern learner.
+5. `templates/index.html` & `static/app.js`: Web client and Web Speech loop handler.
+
+Create a clean, production-ready version of this project with smooth UI animations and clear console logs for local vs cloud execution.
