@@ -12,41 +12,70 @@ import { useSpeechSynthesis } from '@/hooks/use-speech-synthesis';
 
 const WAKE_WORD = 'echo';
 
-const STATE_LABELS: Record<string, string> = {
-  waiting:     '● LISTENING FOR "ECHO"',
-  activated:   '◉ WAKE WORD HEARD — SPEAK YOUR COMMAND',
-  processing:  '⟳ PROCESSING...',
-  speaking:    '▶ SPEAKING',
-  error:       '✕ ERROR',
-  unsupported: '✕ SPEECH NOT SUPPORTED IN THIS BROWSER',
-};
+// ASCII art for ECHOPULSE — cyan teal, neofetch style
+const ASCII_ART = `
+  ███████╗ ██████╗██╗  ██╗ ██████╗ 
+  ██╔════╝██╔════╝██║  ██║██╔═══██╗
+  █████╗  ██║     ███████║██║   ██║
+  ██╔══╝  ██║     ██╔══██║██║   ██║
+  ███████╗╚██████╗██║  ██║╚██████╔╝
+  ╚══════╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝ 
+  ██████╗ ██╗   ██╗██╗     ███████╗███████╗
+  ██╔══██╗██║   ██║██║     ██╔════╝██╔════╝
+  ██████╔╝██║   ██║██║     ███████╗█████╗  
+  ██╔═══╝ ██║   ██║██║     ╚════██║██╔══╝  
+  ██║     ╚██████╔╝███████╗███████║███████╗
+  ╚═╝      ╚═════╝ ╚══════╝╚══════╝╚══════╝
+`.trim();
 
-const STATE_COLORS: Record<string, string> = {
-  waiting:     '#4b5563',   // muted gray
-  activated:   '#22d3ee',   // cyan
-  processing:  '#a78bfa',   // violet
-  speaking:    '#34d399',   // green
-  error:       '#f87171',   // red
-  unsupported: '#f87171',
+interface LogEntry {
+  id: number;
+  text: string;
+  color?: string;
+}
+
+const C = {
+  bg:      '#0d0d0d',
+  teal:    '#00b4b4',
+  red:     '#ff4444',
+  white:   '#e8e8e8',
+  dim:     '#555555',
+  green:   '#44ff88',
+  yellow:  '#ffcc00',
+  magenta: '#cc88ff',
 };
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
   const { speak, cancel: cancelSpeech } = useSpeechSynthesis();
-  const [lastReply, setLastReply] = useState('');
+  const [termLog, setTermLog] = useState<LogEntry[]>([]);
+  const [logId, setLogId] = useState(0);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const voiceRef = useRef<ReturnType<typeof useVoiceRecognition> | null>(null);
   const processCommand = useProcessCommand();
-  const { data: logs = [] } = useListCommandLogs({ limit: 10 });
+  const { data: apiLogs = [] } = useListCommandLogs({ limit: 50 });
+
+  const addLog = useCallback((text: string, color?: string) => {
+    setLogId(prev => {
+      const id = prev + 1;
+      setTermLog(log => [...log.slice(-200), { id, text, color }]);
+      return id;
+    });
+  }, []);
 
   const handleCommand = useCallback((transcript: string) => {
+    addLog(`you  > ${transcript}`, C.white);
+
     processCommand.mutate(
       { data: { query: transcript } },
       {
         onSuccess: (response) => {
-          setLastReply(response.reply);
+          addLog(`echo > ${response.reply}`, C.teal);
           voiceRef.current?.setVoiceState('speaking');
 
           speak(response.reply, () => {
             voiceRef.current?.resumeListening();
+            addLog('', undefined);
           });
 
           queryClient.invalidateQueries({ queryKey: getListCommandLogsQueryKey() });
@@ -56,201 +85,204 @@ export default function Dashboard() {
           }
         },
         onError: () => {
-          setLastReply('Sorry, something went wrong.');
-          speak('Sorry, something went wrong.', () => {
+          const msg = 'error: command processing failed';
+          addLog(`echo > ${msg}`, C.red);
+          speak('Something went wrong.', () => {
             voiceRef.current?.resumeListening();
           });
         },
       }
     );
-  }, [processCommand, queryClient, speak]);
+  }, [processCommand, queryClient, speak, addLog]);
 
   const voice = useVoiceRecognition({
     wakeWord: WAKE_WORD,
     onCommand: handleCommand,
     onWakeWordDetected: () => {
-      // Brief audio cue: cancel any ongoing speech
       cancelSpeech();
+      addLog(`[wake word detected]`, C.yellow);
+    },
+    onError: (err) => {
+      addLog(`[error] ${err}`, C.red);
     },
   });
 
-  // Keep a stable ref so callbacks above can access current voice methods
-  const voiceRef = useRef(voice);
   useEffect(() => { voiceRef.current = voice; }, [voice]);
 
+  // Boot messages on mount
   useEffect(() => {
-    return () => cancelSpeech();
-  }, [cancelSpeech]);
+    const lines = [
+      { text: 'EchoPulse v1.0.0 — voice assistant daemon', color: C.teal },
+      { text: `wake word: "${WAKE_WORD}"`, color: C.dim },
+      { text: 'initializing speech recognition...', color: C.dim },
+    ];
+    lines.forEach((l, i) => {
+      setTimeout(() => addLog(l.text, l.color), i * 120);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const stateColor = STATE_COLORS[voice.state] ?? '#4b5563';
-  const stateLabel = STATE_LABELS[voice.state] ?? voice.state.toUpperCase();
+  // Log state transitions
+  const prevStateRef = useRef(voice.state);
+  useEffect(() => {
+    if (prevStateRef.current === voice.state) return;
+    prevStateRef.current = voice.state;
+    const msgs: Record<string, { text: string; color: string }> = {
+      waiting:     { text: `[ready] listening for "${WAKE_WORD}"...`, color: C.dim },
+      activated:   { text: '[activated] speak your command', color: C.yellow },
+      processing:  { text: '[processing]', color: C.magenta },
+      speaking:    { text: '[speaking]', color: C.green },
+      error:       { text: `[error] ${voice.errorMessage || 'mic permission denied — refresh after allowing mic access'}`, color: C.red },
+      unsupported: { text: '[error] Web Speech API not supported in this browser', color: C.red },
+    };
+    const msg = msgs[voice.state];
+    if (msg) addLog(msg.text, msg.color);
+  }, [voice.state, voice.errorMessage, addLog]);
+
+  // Auto-scroll terminal to bottom
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [termLog]);
+
+  useEffect(() => () => cancelSpeech(), [cancelSpeech]);
+
+  // Status indicator for prompt prefix
+  const promptColor =
+    voice.state === 'waiting'    ? C.dim :
+    voice.state === 'activated'  ? C.yellow :
+    voice.state === 'processing' ? C.magenta :
+    voice.state === 'speaking'   ? C.green :
+    C.red;
+
+  // Stats from recent API logs
+  const localCount = apiLogs.filter(l => l.source === 'local').length;
+  const geminiCount = apiLogs.filter(l => l.source === 'gemini').length;
 
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#0a0a0f',
-      color: '#e2e8f0',
+      background: C.bg,
+      color: C.white,
       fontFamily: "'Space Mono', 'Courier New', monospace",
-      padding: '2rem',
+      fontSize: '13px',
+      lineHeight: '1.5',
       display: 'flex',
       flexDirection: 'column',
-      gap: '1.5rem',
-      maxWidth: '800px',
-      margin: '0 auto',
+      overflow: 'hidden',
     }}>
 
-      {/* Title */}
-      <div>
-        <h1 style={{ fontSize: '1.25rem', letterSpacing: '0.2em', color: '#22d3ee', margin: 0 }}>
-          ECHOPULSE
-        </h1>
-        <p style={{ fontSize: '0.65rem', color: '#4b5563', margin: '0.25rem 0 0', letterSpacing: '0.15em' }}>
-          VOICE ASSISTANT — ALWAYS LISTENING
-        </p>
-      </div>
-
-      {/* Status */}
+      {/* ── NEOFETCH-STYLE HEADER ── */}
       <div style={{
-        border: `1px solid ${stateColor}`,
-        borderRadius: '4px',
-        padding: '1rem 1.25rem',
         display: 'flex',
-        alignItems: 'center',
-        gap: '0.75rem',
+        gap: '3rem',
+        padding: '1.5rem 2rem',
+        borderBottom: `1px solid #1a1a1a`,
+        flexShrink: 0,
       }}>
-        <span style={{
-          width: 10,
-          height: 10,
-          borderRadius: '50%',
-          background: stateColor,
+        {/* ASCII art */}
+        <pre style={{
+          margin: 0,
+          color: C.teal,
+          fontSize: '9px',
+          lineHeight: '1.2',
+          letterSpacing: '0.02em',
           flexShrink: 0,
-          boxShadow: `0 0 8px ${stateColor}`,
-          animation: voice.state === 'waiting' ? 'pulse 2s ease-in-out infinite' : 'none',
-        }} />
-        <span style={{ fontSize: '0.75rem', color: stateColor, letterSpacing: '0.1em', flex: 1 }}>
-          {stateLabel}
-        </span>
-        {voice.state === 'error' && (
-          <button
-            onClick={() => window.location.reload()}
-            style={{
-              background: 'transparent',
-              border: '1px solid #f87171',
-              color: '#f87171',
-              fontSize: '0.6rem',
-              letterSpacing: '0.1em',
-              padding: '0.25rem 0.5rem',
-              cursor: 'pointer',
-              borderRadius: '2px',
-            }}
-          >
-            REFRESH
-          </button>
-        )}
-      </div>
-
-      {/* Error detail */}
-      {voice.state === 'error' && voice.errorMessage && (
-        <div style={{ fontSize: '0.7rem', color: '#f87171', lineHeight: 1.6 }}>
-          {voice.errorMessage}
-        </div>
-      )}
-
-      {/* Interim live transcript */}
-      {voice.interimTranscript && (
-        <div style={{
-          fontSize: '0.8rem',
-          color: '#94a3b8',
-          fontStyle: 'italic',
-          minHeight: '1.2em',
+          userSelect: 'none',
         }}>
-          {voice.interimTranscript}
-        </div>
-      )}
+          {ASCII_ART}
+        </pre>
 
-      {/* Last exchange */}
-      {(voice.lastCommand || lastReply) && (
-        <div style={{
-          background: '#111827',
-          border: '1px solid #1f2937',
-          borderRadius: '4px',
-          padding: '1rem 1.25rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.75rem',
-        }}>
-          {voice.lastCommand && (
-            <div>
-              <div style={{ fontSize: '0.6rem', color: '#4b5563', letterSpacing: '0.15em', marginBottom: '0.25rem' }}>
-                YOU SAID
-              </div>
-              <div style={{ fontSize: '0.9rem', color: '#e2e8f0' }}>
-                {voice.lastCommand}
-              </div>
-            </div>
-          )}
-          {lastReply && (
-            <div>
-              <div style={{ fontSize: '0.6rem', color: '#4b5563', letterSpacing: '0.15em', marginBottom: '0.25rem' }}>
-                ECHO REPLIED
-              </div>
-              <div style={{ fontSize: '0.9rem', color: '#22d3ee' }}>
-                {lastReply}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Recent command log */}
-      {logs.length > 0 && (
-        <div>
-          <div style={{ fontSize: '0.6rem', color: '#4b5563', letterSpacing: '0.15em', marginBottom: '0.5rem' }}>
-            RECENT COMMANDS
+        {/* System info */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', paddingTop: '0.25rem' }}>
+          <div style={{ color: C.teal, marginBottom: '0.4rem' }}>
+            user<span style={{ color: C.white }}>@</span>echopulse
           </div>
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.35rem',
-          }}>
-            {logs.map((log) => (
-              <div key={log.id} style={{
-                display: 'flex',
-                gap: '1rem',
-                fontSize: '0.7rem',
-                color: '#6b7280',
-                borderLeft: '2px solid #1f2937',
-                paddingLeft: '0.75rem',
-              }}>
-                <span style={{ color: '#374151', flexShrink: 0 }}>
-                  {log.source === 'gemini' ? 'AI' : 'LOCAL'}
-                </span>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {log.query}
-                </span>
-              </div>
+          <div style={{ color: C.dim, marginBottom: '0.6rem' }}>{'─'.repeat(20)}</div>
+
+          {[
+            ['Wake Word',   `"${WAKE_WORD}"`],
+            ['Status',      voice.state.toUpperCase()],
+            ['Local hits',  String(localCount)],
+            ['Gemini hits', String(geminiCount)],
+            ['Speech API',  voice.isSupported ? 'active' : 'unavailable'],
+            ['Synthesis',   typeof window !== 'undefined' && window.speechSynthesis ? 'active' : 'unavailable'],
+          ].map(([label, value]) => (
+            <div key={label} style={{ display: 'flex', gap: '0.5rem' }}>
+              <span style={{ color: C.red, minWidth: '90px' }}>{label}:</span>
+              <span style={{ color: C.white }}>{value}</span>
+            </div>
+          ))}
+
+          <div style={{ marginTop: '1rem', display: 'flex', gap: '6px' }}>
+            {[C.red, '#ff8800', C.yellow, C.green, C.teal, '#0088ff', C.magenta, C.white].map(c => (
+              <div key={c} style={{ width: 16, height: 16, background: c, borderRadius: 2 }} />
             ))}
           </div>
         </div>
-      )}
+      </div>
 
-      {/* How to use hint */}
+      {/* ── TERMINAL LOG ── */}
       <div style={{
-        marginTop: 'auto',
-        fontSize: '0.65rem',
-        color: '#374151',
-        letterSpacing: '0.1em',
-        lineHeight: '1.8',
+        flex: 1,
+        overflowY: 'auto',
+        padding: '1rem 2rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1px',
       }}>
-        SAY "ECHO" TO ACTIVATE, THEN SPEAK YOUR COMMAND.<br />
-        EXAMPLE: "ECHO what time is it" or "ECHO" then "add milk to my list"
+        {termLog.map((entry) => (
+          <div key={entry.id} style={{ color: entry.color ?? C.white, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {entry.text}
+          </div>
+        ))}
+
+        {/* Live interim transcript */}
+        {voice.interimTranscript && (
+          <div style={{ color: C.dim, fontStyle: 'italic' }}>
+            {voice.interimTranscript}
+          </div>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* ── PROMPT LINE ── */}
+      <div style={{
+        padding: '0.5rem 2rem 1rem',
+        borderTop: '1px solid #1a1a1a',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.4rem',
+        flexShrink: 0,
+      }}>
+        <span style={{ color: C.teal }}>user</span>
+        <span style={{ color: C.white }}>@</span>
+        <span style={{ color: C.teal }}>echopulse</span>
+        <span style={{ color: C.white }}>:~$</span>
+        <span style={{
+          color: promptColor,
+          marginLeft: '0.4rem',
+          fontSize: '12px',
+        }}>
+          {voice.state === 'waiting'    && `listening for "${WAKE_WORD}"...`}
+          {voice.state === 'activated'  && 'speak your command_'}
+          {voice.state === 'processing' && 'processing...'}
+          {voice.state === 'speaking'   && 'speaking...'}
+          {voice.state === 'error'      && 'mic error — allow access and refresh'}
+          {voice.state === 'unsupported' && 'speech api unavailable'}
+        </span>
+        {/* blinking cursor */}
+        <span style={{ animation: 'blink 1s step-end infinite', color: C.white }}>█</span>
       </div>
 
       <style>{`
-        @keyframes pulse {
+        @keyframes blink {
           0%, 100% { opacity: 1; }
-          50% { opacity: 0.3; }
+          50%       { opacity: 0; }
         }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: ${C.bg}; }
+        ::-webkit-scrollbar-thumb { background: #222; }
       `}</style>
     </div>
   );
