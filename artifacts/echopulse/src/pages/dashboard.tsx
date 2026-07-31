@@ -10,7 +10,7 @@ import {
 import { useVoiceRecognition } from '@/hooks/use-voice-recognition';
 import { useSpeechSynthesis } from '@/hooks/use-speech-synthesis';
 
-const WAKE_WORD = 'echo';
+const WAKE_WORD = 'david';
 
 // ASCII art (user-provided)
 const ASCII_ART = `                                -=                                              
@@ -183,7 +183,7 @@ export default function Dashboard() {
   // Boot messages on mount
   useEffect(() => {
     const lines = [
-      { text: 'EchoPulse v1.0.0 — voice assistant daemon', color: C.teal },
+      { text: 'david v1.0.0 — voice assistant daemon', color: C.teal },
       { text: `wake word: "${WAKE_WORD}"`, color: C.dim },
       { text: 'initializing speech recognition...', color: C.dim },
     ];
@@ -271,7 +271,7 @@ export default function Dashboard() {
         {/* System info */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', paddingTop: '0.25rem', flexShrink: 0 }}>
           <div style={{ color: C.teal, marginBottom: '0.4rem' }}>
-            user<span style={{ color: C.white }}>@</span>echopulse
+            user<span style={{ color: C.white }}>@</span>david
           </div>
           <div style={{ color: C.dim, marginBottom: '0.6rem' }}>{'─'.repeat(20)}</div>
 
@@ -333,7 +333,7 @@ export default function Dashboard() {
       }}>
         <span style={{ color: C.teal }}>user</span>
         <span style={{ color: C.white }}>@</span>
-        <span style={{ color: C.teal }}>echopulse</span>
+        <span style={{ color: C.teal }}>david</span>
         <span style={{ color: C.white }}>:~$</span>
         <span style={{
           color: promptColor,

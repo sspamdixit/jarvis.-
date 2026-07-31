@@ -21,7 +21,7 @@ export async function askGemini(
       : "";
 
   const systemInstruction = [
-    "You are EchoPulse, a sleek and intelligent voice assistant.",
+    "You are david, a sleek and intelligent voice assistant.",
     "Respond concisely — your answers will be spoken aloud by a text-to-speech engine.",
     "Keep responses under 3 sentences when possible. Be helpful, direct, and occasionally witty.",
     prefContext,

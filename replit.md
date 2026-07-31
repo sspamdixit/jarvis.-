@@ -1,4 +1,4 @@
-# EchoPulse — Voice Assistant Command Center
+# david — Voice Assistant Command Center
 
 A full-stack Alexa-style voice assistant with a cyberpunk dark-mode dashboard, local intent routing, Gemini AI fallback, and PostgreSQL persistence.
 
@@ -6,7 +6,7 @@ A full-stack Alexa-style voice assistant with a cyberpunk dark-mode dashboard, l
 
 ```
 artifacts/
-  echopulse/        # React + Vite frontend (preview at /)
+  david/            # React + Vite frontend (preview at /)
   api-server/       # Express backend (port from $PORT, API at /api)
 lib/
   db/               # Drizzle ORM schema + migrations (PostgreSQL)
@@ -28,12 +28,12 @@ lib/
 ## Running the App
 
 Both workflows start automatically:
-- **`artifacts/echopulse: web`** — Vite dev server for the frontend
+- **`artifacts/echopulse: web`** — Vite dev server for david (frontend)
 - **`artifacts/api-server: API Server`** — Express API server
 
 To restart manually:
 ```bash
-pnpm --filter @workspace/echopulse run dev
+pnpm --filter @workspace/david run dev
 pnpm --filter @workspace/api-server run dev
 ```
 

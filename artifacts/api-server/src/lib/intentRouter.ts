@@ -1,5 +1,5 @@
 /**
- * EchoPulse Local Intent Router — 0% LLM overhead, instant regex matching
+ * david Local Intent Router — 0% LLM overhead, instant regex matching
  */
 
 export interface RouterMatch {
@@ -125,12 +125,12 @@ const PATTERNS: Array<{
 
   // Greetings
   {
-    pattern: /\b(hello|hi|hey echo(pulse)?|good (morning|afternoon|evening))\b/i,
+    pattern: /\b(hello|hi|hey david|good (morning|afternoon|evening))\b/i,
     action: "greeting",
     handler: () => {
       const hour = new Date().getHours();
       const greeting = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
-      return { reply: `Good ${greeting}! I'm EchoPulse. How can I help you today?` };
+      return { reply: `Good ${greeting}! I'm david. How can I help you today?` };
     },
   },
 
