@@ -1,230 +1,257 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   useProcessCommand,
-  useListTasks,
-  useCreateTask,
-  useUpdateTask,
-  useDeleteTask,
   useListCommandLogs,
-  useGetStats,
   getListTasksQueryKey,
   getListCommandLogsQueryKey,
   getGetStatsQueryKey,
 } from '@workspace/api-client-react';
 import { useVoiceRecognition } from '@/hooks/use-voice-recognition';
 import { useSpeechSynthesis } from '@/hooks/use-speech-synthesis';
-import { CommandOrb } from '@/components/command-orb';
-import { StatsBar } from '@/components/stats-bar';
-import { TaskPanel } from '@/components/task-panel';
-import { CommandHistory } from '@/components/command-history';
-import { useToast } from '@/hooks/use-toast';
+
+const WAKE_WORD = 'echo';
+
+const STATE_LABELS: Record<string, string> = {
+  waiting:     '● LISTENING FOR "ECHO"',
+  activated:   '◉ WAKE WORD HEARD — SPEAK YOUR COMMAND',
+  processing:  '⟳ PROCESSING...',
+  speaking:    '▶ SPEAKING',
+  error:       '✕ ERROR',
+  unsupported: '✕ SPEECH NOT SUPPORTED IN THIS BROWSER',
+};
+
+const STATE_COLORS: Record<string, string> = {
+  waiting:     '#4b5563',   // muted gray
+  activated:   '#22d3ee',   // cyan
+  processing:  '#a78bfa',   // violet
+  speaking:    '#34d399',   // green
+  error:       '#f87171',   // red
+  unsupported: '#f87171',
+};
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
   const { speak, cancel: cancelSpeech } = useSpeechSynthesis();
-
-  // API queries
-  const { data: tasks = [], isLoading: tasksLoading } = useListTasks();
-  const { data: logs = [], isLoading: logsLoading } = useListCommandLogs({ limit: 20 });
-  const { data: stats, isLoading: statsLoading } = useGetStats();
-
-  // API mutations
+  const [lastReply, setLastReply] = useState('');
   const processCommand = useProcessCommand();
-  const createTask = useCreateTask();
-  const updateTask = useUpdateTask();
-  const deleteTask = useDeleteTask();
+  const { data: logs = [] } = useListCommandLogs({ limit: 10 });
 
-  // Speech synthesis state management
-  const isSpeakingRef = useRef(false);
-
-  const handleTranscript = useCallback((transcript: string) => {
-    // Send to API
+  const handleCommand = useCallback((transcript: string) => {
     processCommand.mutate(
       { data: { query: transcript } },
       {
         onSuccess: (response) => {
-          // Speak the reply
-          isSpeakingRef.current = true;
-          voiceState.setState('speaking');
-          
+          setLastReply(response.reply);
+          voiceRef.current?.setVoiceState('speaking');
+
           speak(response.reply, () => {
-            isSpeakingRef.current = false;
-            voiceState.setState('idle');
+            voiceRef.current?.resumeListening();
           });
 
-          // Refresh data
           queryClient.invalidateQueries({ queryKey: getListCommandLogsQueryKey() });
           queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-          
-          // If it was a task action, refresh tasks too
           if (response.action?.includes('task')) {
             queryClient.invalidateQueries({ queryKey: getListTasksQueryKey() });
           }
         },
-        onError: (error) => {
-          voiceState.setState('error');
-          toast({
-            title: 'Command failed',
-            description: error instanceof Error ? error.message : 'Unknown error',
-            variant: 'destructive',
+        onError: () => {
+          setLastReply('Sorry, something went wrong.');
+          speak('Sorry, something went wrong.', () => {
+            voiceRef.current?.resumeListening();
           });
-          setTimeout(() => {
-            voiceState.setState('idle');
-          }, 2000);
         },
       }
     );
-  }, [processCommand, queryClient, speak, toast]);
+  }, [processCommand, queryClient, speak]);
 
-  const voiceState = useVoiceRecognition({
-    onTranscript: handleTranscript,
-    onError: (error) => {
-      toast({
-        title: 'Voice recognition error',
-        description: error,
-        variant: 'destructive',
-      });
+  const voice = useVoiceRecognition({
+    wakeWord: WAKE_WORD,
+    onCommand: handleCommand,
+    onWakeWordDetected: () => {
+      // Brief audio cue: cancel any ongoing speech
+      cancelSpeech();
     },
   });
 
-  // Update state when processing
+  // Keep a stable ref so callbacks above can access current voice methods
+  const voiceRef = useRef(voice);
+  useEffect(() => { voiceRef.current = voice; }, [voice]);
+
   useEffect(() => {
-    if (processCommand.isPending && !isSpeakingRef.current) {
-      voiceState.setState('processing');
-    }
-  }, [processCommand.isPending, voiceState]);
-
-  // Task handlers
-  const handleToggleTask = useCallback((id: number, completed: boolean) => {
-    updateTask.mutate(
-      { id, data: { completed } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListTasksQueryKey() });
-          queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-        },
-        onError: (error) => {
-          toast({
-            title: 'Failed to update task',
-            description: error instanceof Error ? error.message : 'Unknown error',
-            variant: 'destructive',
-          });
-        },
-      }
-    );
-  }, [updateTask, queryClient, toast]);
-
-  const handleDeleteTask = useCallback((id: number) => {
-    deleteTask.mutate(
-      { id },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListTasksQueryKey() });
-          queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-        },
-        onError: (error) => {
-          toast({
-            title: 'Failed to delete task',
-            description: error instanceof Error ? error.message : 'Unknown error',
-            variant: 'destructive',
-          });
-        },
-      }
-    );
-  }, [deleteTask, queryClient, toast]);
-
-  const handleCreateTask = useCallback((text: string) => {
-    createTask.mutate(
-      { data: { text } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListTasksQueryKey() });
-          queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-          toast({
-            title: 'Task created',
-            description: text,
-          });
-        },
-        onError: (error) => {
-          toast({
-            title: 'Failed to create task',
-            description: error instanceof Error ? error.message : 'Unknown error',
-            variant: 'destructive',
-          });
-        },
-      }
-    );
-  }, [createTask, queryClient, toast]);
-
-  // Cleanup speech on unmount
-  useEffect(() => {
-    return () => {
-      cancelSpeech();
-    };
+    return () => cancelSpeech();
   }, [cancelSpeech]);
 
+  const stateColor = STATE_COLORS[voice.state] ?? '#4b5563';
+  const stateLabel = STATE_LABELS[voice.state] ?? voice.state.toUpperCase();
+
   return (
-    <div className="min-h-screen bg-background noise-overlay scanlines" data-testid="dashboard-page">
-      <div className="container mx-auto px-4 py-8 max-w-7xl">
-        {/* Header */}
-        <div className="mb-8 text-center">
-          <h1 className="font-mono text-4xl font-bold tracking-wider mb-2">
-            <span className="bg-gradient-to-r from-primary via-secondary to-primary bg-clip-text text-transparent animate-pulse-glow">
-              ECHOPULSE
-            </span>
-          </h1>
-          <div className="font-mono text-xs tracking-widest text-muted-foreground">
-            VOICE ASSISTANT COMMAND CENTER
-          </div>
-        </div>
+    <div style={{
+      minHeight: '100vh',
+      background: '#0a0a0f',
+      color: '#e2e8f0',
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+      padding: '2rem',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '1.5rem',
+      maxWidth: '800px',
+      margin: '0 auto',
+    }}>
 
-        {/* Stats bar */}
-        <div className="mb-8">
-          <StatsBar stats={stats} isLoading={statsLoading} />
-        </div>
-
-        {/* Main grid */}
-        <div className="grid lg:grid-cols-2 gap-8 mb-8">
-          {/* Command orb - takes center stage */}
-          <div className="lg:col-span-2 flex items-center justify-center py-12 bg-card/30 backdrop-blur-sm border border-card-border rounded-lg">
-            <CommandOrb
-              state={voiceState.state}
-              interimTranscript={voiceState.interimTranscript}
-              onClick={voiceState.toggleListening}
-              isSupported={voiceState.isSupported}
-            />
-          </div>
-
-          {/* Task panel */}
-          <div className="h-[500px]">
-            <TaskPanel
-              tasks={tasks}
-              isLoading={tasksLoading}
-              onToggle={handleToggleTask}
-              onDelete={handleDeleteTask}
-              onCreate={handleCreateTask}
-            />
-          </div>
-
-          {/* Command history */}
-          <div className="h-[500px]">
-            <CommandHistory logs={logs} isLoading={logsLoading} />
-          </div>
-        </div>
-
-        {/* Footer info */}
-        <div className="text-center">
-          <div className="font-mono text-[10px] text-muted-foreground/60 tracking-wider">
-            {voiceState.isSupported ? (
-              <>SYSTEM READY • WEB SPEECH API ACTIVE</>
-            ) : (
-              <>SYSTEM DEGRADED • WEB SPEECH API UNAVAILABLE</>
-            )}
-          </div>
-        </div>
+      {/* Title */}
+      <div>
+        <h1 style={{ fontSize: '1.25rem', letterSpacing: '0.2em', color: '#22d3ee', margin: 0 }}>
+          ECHOPULSE
+        </h1>
+        <p style={{ fontSize: '0.65rem', color: '#4b5563', margin: '0.25rem 0 0', letterSpacing: '0.15em' }}>
+          VOICE ASSISTANT — ALWAYS LISTENING
+        </p>
       </div>
+
+      {/* Status */}
+      <div style={{
+        border: `1px solid ${stateColor}`,
+        borderRadius: '4px',
+        padding: '1rem 1.25rem',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.75rem',
+      }}>
+        <span style={{
+          width: 10,
+          height: 10,
+          borderRadius: '50%',
+          background: stateColor,
+          flexShrink: 0,
+          boxShadow: `0 0 8px ${stateColor}`,
+          animation: voice.state === 'waiting' ? 'pulse 2s ease-in-out infinite' : 'none',
+        }} />
+        <span style={{ fontSize: '0.75rem', color: stateColor, letterSpacing: '0.1em', flex: 1 }}>
+          {stateLabel}
+        </span>
+        {voice.state === 'error' && (
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              background: 'transparent',
+              border: '1px solid #f87171',
+              color: '#f87171',
+              fontSize: '0.6rem',
+              letterSpacing: '0.1em',
+              padding: '0.25rem 0.5rem',
+              cursor: 'pointer',
+              borderRadius: '2px',
+            }}
+          >
+            REFRESH
+          </button>
+        )}
+      </div>
+
+      {/* Error detail */}
+      {voice.state === 'error' && voice.errorMessage && (
+        <div style={{ fontSize: '0.7rem', color: '#f87171', lineHeight: 1.6 }}>
+          {voice.errorMessage}
+        </div>
+      )}
+
+      {/* Interim live transcript */}
+      {voice.interimTranscript && (
+        <div style={{
+          fontSize: '0.8rem',
+          color: '#94a3b8',
+          fontStyle: 'italic',
+          minHeight: '1.2em',
+        }}>
+          {voice.interimTranscript}
+        </div>
+      )}
+
+      {/* Last exchange */}
+      {(voice.lastCommand || lastReply) && (
+        <div style={{
+          background: '#111827',
+          border: '1px solid #1f2937',
+          borderRadius: '4px',
+          padding: '1rem 1.25rem',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.75rem',
+        }}>
+          {voice.lastCommand && (
+            <div>
+              <div style={{ fontSize: '0.6rem', color: '#4b5563', letterSpacing: '0.15em', marginBottom: '0.25rem' }}>
+                YOU SAID
+              </div>
+              <div style={{ fontSize: '0.9rem', color: '#e2e8f0' }}>
+                {voice.lastCommand}
+              </div>
+            </div>
+          )}
+          {lastReply && (
+            <div>
+              <div style={{ fontSize: '0.6rem', color: '#4b5563', letterSpacing: '0.15em', marginBottom: '0.25rem' }}>
+                ECHO REPLIED
+              </div>
+              <div style={{ fontSize: '0.9rem', color: '#22d3ee' }}>
+                {lastReply}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Recent command log */}
+      {logs.length > 0 && (
+        <div>
+          <div style={{ fontSize: '0.6rem', color: '#4b5563', letterSpacing: '0.15em', marginBottom: '0.5rem' }}>
+            RECENT COMMANDS
+          </div>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.35rem',
+          }}>
+            {logs.map((log) => (
+              <div key={log.id} style={{
+                display: 'flex',
+                gap: '1rem',
+                fontSize: '0.7rem',
+                color: '#6b7280',
+                borderLeft: '2px solid #1f2937',
+                paddingLeft: '0.75rem',
+              }}>
+                <span style={{ color: '#374151', flexShrink: 0 }}>
+                  {log.source === 'gemini' ? 'AI' : 'LOCAL'}
+                </span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {log.query}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* How to use hint */}
+      <div style={{
+        marginTop: 'auto',
+        fontSize: '0.65rem',
+        color: '#374151',
+        letterSpacing: '0.1em',
+        lineHeight: '1.8',
+      }}>
+        SAY "ECHO" TO ACTIVATE, THEN SPEAK YOUR COMMAND.<br />
+        EXAMPLE: "ECHO what time is it" or "ECHO" then "add milk to my list"
+      </div>
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
     </div>
   );
 }
