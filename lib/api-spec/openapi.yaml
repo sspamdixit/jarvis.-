@@ -3,13 +3,21 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: EchoPulse Voice Assistant API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: assistant
+    description: Voice assistant command processing
+  - name: tasks
+    description: Task management
+  - name: logs
+    description: Command history logs
+  - name: preferences
+    description: User preference tracking
 paths:
   /healthz:
     get:
@@ -24,6 +32,158 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /command:
+    post:
+      operationId: processCommand
+      tags: [assistant]
+      summary: Process a voice command
+      description: Routes to local handler or Gemini AI fallback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommandInput"
+      responses:
+        "200":
+          description: Command response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResponse"
+
+  /tasks:
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: List all tasks
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Task"
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Create a new task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskInput"
+      responses:
+        "201":
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+
+  /tasks/{id}:
+    patch:
+      operationId: updateTask
+      tags: [tasks]
+      summary: Update a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskUpdate"
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteTask
+      tags: [tasks]
+      summary: Delete a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /command-logs:
+    get:
+      operationId: listCommandLogs
+      tags: [logs]
+      summary: List recent command logs
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: number
+            default: 20
+      responses:
+        "200":
+          description: List of command logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CommandLog"
+
+  /preferences:
+    get:
+      operationId: listPreferences
+      tags: [preferences]
+      summary: List learned user preferences
+      responses:
+        "200":
+          description: List of preferences
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Preference"
+
+  /stats:
+    get:
+      operationId: getStats
+      tags: [assistant]
+      summary: Get assistant usage statistics
+      responses:
+        "200":
+          description: Usage statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +194,131 @@ components:
       required:
         - status
 
+    CommandInput:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: The transcribed voice command text
+
+    CommandResponse:
+      type: object
+      required: [source, reply, query]
+      properties:
+        source:
+          type: string
+          description: "Either 'local_router' or 'gemini_api'"
+        reply:
+          type: string
+          description: The assistant's response text
+        query:
+          type: string
+        matchedPattern:
+          type: ["string", "null"]
+          description: The regex pattern that matched, if local
+        action:
+          type: ["string", "null"]
+          description: A machine-readable action type (e.g. 'task_added', 'time', 'play_music')
+
+    Task:
+      type: object
+      required: [id, text, completed, createdAt]
+      properties:
+        id:
+          type: number
+        text:
+          type: string
+        completed:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TaskInput:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+
+    TaskUpdate:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+        completed:
+          type: boolean
+
+    CommandLog:
+      type: object
+      required: [id, query, source, reply, createdAt]
+      properties:
+        id:
+          type: number
+        query:
+          type: string
+        source:
+          type: string
+        reply:
+          type: string
+        matchedPattern:
+          type: ["string", "null"]
+        action:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    Preference:
+      type: object
+      required: [id, category, platform, count, updatedAt]
+      properties:
+        id:
+          type: number
+        category:
+          type: string
+        platform:
+          type: string
+        count:
+          type: number
+        updatedAt:
+          type: string
+          format: date-time
+
+    AssistantStats:
+      type: object
+      required: [totalCommands, localCommands, geminiCommands, tasksTotal, tasksCompleted]
+      properties:
+        totalCommands:
+          type: number
+        localCommands:
+          type: number
+        geminiCommands:
+          type: number
+        tasksTotal:
+          type: number
+        tasksCompleted:
+          type: number
+        topCategories:
+          type: array
+          items:
+            type: object
+            required: [category, count]
+            properties:
+              category:
+                type: string
+              count:
+                type: number
+
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

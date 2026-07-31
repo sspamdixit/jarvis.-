@@ -1,45 +1,86 @@
-# [Project name]
+# EchoPulse — Voice Assistant Command Center
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A full-stack Alexa-style voice assistant with a cyberpunk dark-mode dashboard, local intent routing, Gemini AI fallback, and PostgreSQL persistence.
 
-## Run & Operate
+## Project Structure
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+```
+artifacts/
+  echopulse/        # React + Vite frontend (preview at /)
+  api-server/       # Express backend (port from $PORT, API at /api)
+lib/
+  db/               # Drizzle ORM schema + migrations (PostgreSQL)
+  api-spec/         # OpenAPI spec + orval codegen config
+  api-client-react/ # Auto-generated React Query hooks
+  api-zod/          # Auto-generated Zod schemas
+```
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18, Vite, Tailwind CSS v4, Space Mono / Geist Mono fonts |
+| Backend | Express, Fastify-style pino logging, esbuild bundler |
+| AI | Google Gemini (`@google/genai` v1.3.0) via `GEMINI_API_KEY` |
+| Database | Replit PostgreSQL via Drizzle ORM |
+| Type safety | OpenAPI → orval codegen (React Query hooks + Zod schemas) |
 
-## Where things live
+## Running the App
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+Both workflows start automatically:
+- **`artifacts/echopulse: web`** — Vite dev server for the frontend
+- **`artifacts/api-server: API Server`** — Express API server
 
-## Architecture decisions
+To restart manually:
+```bash
+pnpm --filter @workspace/echopulse run dev
+pnpm --filter @workspace/api-server run dev
+```
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+## API Endpoints
 
-## Product
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/command` | Process voice command (local router → Gemini fallback) |
+| GET | `/api/tasks` | List all tasks |
+| POST | `/api/tasks` | Create a task |
+| PATCH | `/api/tasks/:id` | Update a task |
+| DELETE | `/api/tasks/:id` | Delete a task |
+| GET | `/api/command-logs` | Recent command history |
+| GET | `/api/preferences` | Learned user preferences |
+| GET | `/api/stats` | Aggregate stats (local/gemini counts, tasks) |
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+## Database Schema
 
-## User preferences
+Three tables managed by Drizzle ORM:
+- `tasks` — id, text, completed, createdAt, updatedAt
+- `command_logs` — id, query, source, reply, matchedPattern, action, createdAt
+- `preferences` — id, category, platform, count, updatedAt
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+To push schema changes:
+```bash
+pnpm --filter @workspace/db run db:push
+```
 
-## Gotchas
+## Environment Secrets
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+| Secret | Purpose |
+|--------|---------|
+| `GEMINI_API_KEY` | Google Gemini AI fallback |
+| `SESSION_SECRET` | Express session signing |
 
-## Pointers
+## Intent Router
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+`artifacts/api-server/src/lib/intentRouter.ts` handles commands locally (zero API cost) via regex patterns:
+- Greetings, time, date
+- Task management (add/list/complete/delete)
+- Volume control
+- Music platform detection (preference learning)
+- Jokes, weather stubs
+
+Unrecognized queries fall through to Gemini with user preferences injected into the system prompt.
+
+## User Preferences
+
+- Keep cyberpunk theme — dark mode is always-on (`dark` class on `<html>`)
+- CSS variable order matters: `:root` must come before `.dark` in `index.css` so the dark overrides win

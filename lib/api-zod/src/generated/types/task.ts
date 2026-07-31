@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
+export interface Task {
+  id: number;
+  text: string;
+  completed: boolean;
+  createdAt: Date;
+  updatedAt?: Date;
 }
