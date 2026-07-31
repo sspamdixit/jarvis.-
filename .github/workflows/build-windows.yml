@@ -1,0 +1,92 @@
+name: Build Windows .exe
+
+# Trigger manually from the Actions tab — just click "Run workflow"
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label (e.g. v0.1.0)'
+        required: false
+        default: 'v0.1.0'
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      # ── Source ──────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Node / pnpm ──────────────────────────────────────────────────────────
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      # ── Rust ─────────────────────────────────────────────────────────────────
+      - name: Setup Rust (stable, x86_64-pc-windows-msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'artifacts/echopulse/src-tauri -> target'
+
+      # ── Dependencies ──────────────────────────────────────────────────────────
+      - name: Install Node dependencies
+        run: pnpm install
+
+      # ── Icons ────────────────────────────────────────────────────────────────
+      # Generate a 512×512 teal PNG, then let `tauri icon` produce all sizes
+      # (32×32, 128×128, 256×256, .ico, .icns, etc.)
+      - name: Generate source icon (512×512 teal PNG)
+        shell: python
+        run: |
+          import struct, zlib, os
+          def make_png(size, r, g, b):
+              def chunk(name, data):
+                  crc = zlib.crc32(name + data) & 0xffffffff
+                  return struct.pack('>I', len(data)) + name + data + struct.pack('>I', crc)
+              ihdr = struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0)
+              row = bytes([0]) + bytes([r, g, b] * size)
+              idat = zlib.compress(row * size)
+              return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', idat) + chunk(b'IEND', b'')
+          out = 'artifacts/echopulse/app-icon.png'
+          with open(out, 'wb') as f:
+              f.write(make_png(512, 0, 180, 180))
+          print(f'Written {os.path.getsize(out)} bytes → {out}')
+
+      - name: Generate all Tauri icon sizes
+        working-directory: artifacts/echopulse
+        run: pnpm tauri icon app-icon.png
+
+      # ── Build ────────────────────────────────────────────────────────────────
+      # `tauri build` runs beforeBuildCommand ("pnpm build:tauri") automatically,
+      # then compiles Rust and bundles the NSIS installer.
+      - name: Build Tauri app (NSIS installer)
+        working-directory: artifacts/echopulse
+        run: pnpm tauri build
+        env:
+          # Set your Gemini API key as a GitHub repo secret if you want it
+          # baked into the build; otherwise leave empty and set it via the
+          # in-app settings after installing.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      # ── Upload ───────────────────────────────────────────────────────────────
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: david-windows-${{ github.event.inputs.version || 'latest' }}-${{ github.run_number }}
+          path: artifacts/echopulse/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 90

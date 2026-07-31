@@ -11,10 +11,10 @@ paths = [ "/" ]
 localPort = 23685
 
 [services.development]
-run = "pnpm --filter @workspace/echopulse run dev"
+run = "pnpm --filter @workspace/david run dev"
 
 [services.production]
-build = [ "pnpm", "--filter", "@workspace/echopulse", "run", "build" ]
+build = [ "pnpm", "--filter", "@workspace/david", "run", "build" ]
 serve = "static"
 publicDir = "artifacts/echopulse/dist/public"
 

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schemas.tauri.app/security/1",
+  "identifier": "default",
+  "description": "Default capabilities for david",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-is-visible"
+  ]
+}
