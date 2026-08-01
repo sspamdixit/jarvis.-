@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -38,6 +39,14 @@
     "nsis": {
       "displayLanguageSelector": false,
       "installMode": "currentUser"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxMDlFQzc2NTRBMzA5MDcKUldRSENhTlVkdXdKNGNLQ2g2cGZ2Qlk1d3M4Ny9ZMksyUERBbkpsZnI4UXl1M1U0cldaSDQ5Z2oK",
+      "endpoints": [
+        "https://github.com/sspamdixit/jarvis.-/releases/latest/download/latest.json"
+      ]
     }
   }
 }

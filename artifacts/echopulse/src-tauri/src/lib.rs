@@ -224,8 +224,20 @@ fn show_wake_overlay(app: tauri::AppHandle) -> Result<(), String> {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new())
         .setup(|app| {
+            // ── Silent background update check ────────────────────────────
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Ok(updater) = handle.updater() {
+                    if let Ok(Some(update)) = updater.check().await {
+                        let _ = update
+                            .download_and_install(|_, _| {}, || {})
+                            .await;
+                    }
+                }
+            });
             // ── Overlay window (always-on-top badge, shown on wake word) ──
             #[cfg(debug_assertions)]
             let overlay_url = tauri::WebviewUrl::External(

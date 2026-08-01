@@ -1,18 +1,27 @@
-name: Build Windows .exe
+name: Build & Release Windows .exe
 
-# Trigger manually from the Actions tab — just click "Run workflow"
+# ── Triggers ──────────────────────────────────────────────────────────────────
+# Manual run from the Actions tab, or auto-run on every push to main.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version label (e.g. v0.1.0)'
+        description: 'Version (e.g. v0.2.0) — leave blank to use the one in tauri.conf.json'
         required: false
-        default: 'v0.1.0'
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - 'artifacts/echopulse/**'
+      - '.github/workflows/build-windows.yml'
 
 jobs:
   build-windows:
-    name: Build Windows installer
+    name: Build & publish Windows installer
     runs-on: windows-latest
+
+    permissions:
+      contents: write   # needed to create GitHub Releases
 
     steps:
       # ── Source ──────────────────────────────────────────────────────────────
@@ -46,10 +55,8 @@ jobs:
       - name: Install Node dependencies
         run: pnpm install
 
-      # ── Icons ────────────────────────────────────────────────────────────────
-      # Generate a 512×512 teal PNG, then let `tauri icon` produce all sizes
-      # (32×32, 128×128, 256×256, .ico, .icns, etc.)
-      - name: Generate source icon (512×512 teal PNG)
+      # ── Icons (orange theme) ─────────────────────────────────────────────────
+      - name: Generate source icon (512×512 orange PNG)
         shell: python
         run: |
           import struct, zlib, os
@@ -63,30 +70,115 @@ jobs:
               return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', idat) + chunk(b'IEND', b'')
           out = 'artifacts/echopulse/app-icon.png'
           with open(out, 'wb') as f:
-              f.write(make_png(512, 0, 180, 180))
+              f.write(make_png(512, 255, 102, 0))   # #FF6600 orange
           print(f'Written {os.path.getsize(out)} bytes → {out}')
 
       - name: Generate all Tauri icon sizes
         working-directory: artifacts/echopulse
         run: pnpm tauri icon app-icon.png
 
-      # ── Build ────────────────────────────────────────────────────────────────
-      # `tauri build` runs beforeBuildCommand ("pnpm build:tauri") automatically,
-      # then compiles Rust and bundles the NSIS installer.
-      - name: Build Tauri app (NSIS installer)
+      # ── Build (signed) ────────────────────────────────────────────────────────
+      - name: Build Tauri app (NSIS installer + updater artifacts)
         working-directory: artifacts/echopulse
         run: pnpm tauri build
         env:
-          # Set your Gemini API key as a GitHub repo secret if you want it
-          # baked into the build; otherwise leave empty and set it via the
-          # in-app settings after installing.
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Updater signing key — add TAURI_SIGNING_PRIVATE_KEY as a repo secret.
+          # Value: the full content of the generated private key file (base64 string).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # ── Upload ───────────────────────────────────────────────────────────────
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
+      # ── Determine version ─────────────────────────────────────────────────────
+      - name: Read version from tauri.conf.json
+        id: ver
+        shell: python
+        run: |
+          import json, os
+          with open('artifacts/echopulse/src-tauri/tauri.conf.json') as f:
+              v = json.load(f)['version']
+          tag = os.environ.get('INPUT_VERSION') or f'v{v}'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'tag={tag}\n')
+              out.write(f'semver={v}\n')
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+
+      # ── Build latest.json update manifest ─────────────────────────────────────
+      - name: Generate latest.json update manifest
+        id: manifest
+        shell: python
+        run: |
+          import json, os, glob, datetime
+
+          bundle_dir = 'artifacts/echopulse/src-tauri/target/release/bundle/nsis'
+          tag        = os.environ['TAG']
+          repo       = os.environ['GITHUB_REPOSITORY']
+          base_url   = f'https://github.com/{repo}/releases/download/{tag}'
+
+          # Find the generated .nsis.zip and its .sig
+          zips = glob.glob(f'{bundle_dir}/*.nsis.zip')
+          if not zips:
+              raise FileNotFoundError(f'No .nsis.zip found in {bundle_dir}')
+          zip_path = zips[0]
+          sig_path = zip_path + '.sig'
+
+          zip_name = os.path.basename(zip_path)
+          with open(sig_path) as f:
+              signature = f.read().strip()
+
+          manifest = {
+              'version': os.environ['SEMVER'],
+              'notes':   f'david {tag}',
+              'pub_date': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+              'platforms': {
+                  'windows-x86_64': {
+                      'signature': signature,
+                      'url': f'{base_url}/{zip_name}',
+                  }
+              }
+          }
+
+          out_path = f'{bundle_dir}/latest.json'
+          with open(out_path, 'w') as f:
+              json.dump(manifest, f, indent=2)
+          print(f'Wrote {out_path}')
+          print(json.dumps(manifest, indent=2))
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as o:
+              o.write(f'bundle_dir={bundle_dir}\n')
+              o.write(f'zip_name={zip_name}\n')
+        env:
+          TAG:    ${{ steps.ver.outputs.tag }}
+          SEMVER: ${{ steps.ver.outputs.semver }}
+
+      # ── Create / update GitHub Release ────────────────────────────────────────
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: david-windows-${{ github.event.inputs.version || 'latest' }}-${{ github.run_number }}
-          path: artifacts/echopulse/src-tauri/target/release/bundle/nsis/*.exe
-          if-no-files-found: error
-          retention-days: 90
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name:     david ${{ steps.ver.outputs.tag }}
+          body: |
+            ## david ${{ steps.ver.outputs.tag }}
+
+            ### Install
+            Download **`david_${{ steps.ver.outputs.semver }}_x64-setup.exe`** and run it.
+            No admin rights required — installs for the current user only.
+
+            ### Update
+            If you already have david installed it will update itself silently
+            in the background next time it launches.
+
+            ### First-time setup
+            1. david starts in the system tray (bottom-right)
+            2. Click the tray icon to open the window
+            3. Click ⚙ and paste your Gemini API key
+            4. Optionally set your favourite playlist URL
+            5. Say **"david"** to wake it
+          make_latest: true
+          files: |
+            ${{ steps.manifest.outputs.bundle_dir }}/*.exe
+            ${{ steps.manifest.outputs.bundle_dir }}/*.nsis.zip
+            ${{ steps.manifest.outputs.bundle_dir }}/*.nsis.zip.sig
+            ${{ steps.manifest.outputs.bundle_dir }}/latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
