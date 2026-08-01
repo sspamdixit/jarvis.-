@@ -3,6 +3,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+use tauri_plugin_updater::UpdaterExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -256,7 +257,6 @@ pub fn run() {
                 .always_on_top(true)
                 .resizable(false)
                 .visible(false)
-                .skip_taskbar(true)
                 .build();
 
             // ── Hide the main window — appears on tray click ──────────────
