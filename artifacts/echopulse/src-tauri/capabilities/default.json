@@ -2,7 +2,7 @@
   "$schema": "https://schemas.tauri.app/security/1",
   "identifier": "default",
   "description": "Default capabilities for david",
-  "windows": ["main"],
+  "windows": ["main", "overlay"],
   "permissions": [
     "core:default",
     "core:window:allow-hide",

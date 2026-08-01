@@ -38,6 +38,7 @@ pub struct CommandResponse {
     pub reply: String,
     pub source: String,
     pub action: Option<String>,
+    pub opened_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -55,7 +56,18 @@ async fn process_command(
     state: tauri::State<'_, AppState>,
 ) -> Result<CommandResponse, String> {
     // 1. Try local intent router
-    if let Some(matched) = intent::route(&query) {
+    if let Some(mut matched) = intent::route(&query) {
+        // For play_favourites: resolve URL from stored setting
+        if matched.action == "play_favourites" {
+            let stored_url = state
+                .db
+                .get_config("music_playlist_url")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "https://music.youtube.com/".into());
+            matched.open_url = Some(stored_url);
+        }
+
         // Side-effect: create task in DB
         if matched.action == "task_add" {
             if let Some(text) = &matched.task_text {
@@ -66,6 +78,15 @@ async fn process_command(
         // Side-effect: learn preference
         if let Some((cat, platform)) = &matched.preference {
             state.db.upsert_preference(cat, platform).ok();
+        }
+
+        // Side-effect: open URL in default browser
+        let opened_url = matched.open_url.clone();
+        if let Some(ref url) = opened_url {
+            let url_clone = url.clone();
+            std::thread::spawn(move || {
+                let _ = open::that(url_clone);
+            });
         }
 
         state
@@ -83,6 +104,7 @@ async fn process_command(
             reply: matched.reply,
             source: "local".into(),
             action: Some(matched.action),
+            opened_url,
         });
     }
 
@@ -101,6 +123,7 @@ async fn process_command(
             reply,
             source: "local".into(),
             action: None,
+            opened_url: None,
         });
     }
 
@@ -116,6 +139,7 @@ async fn process_command(
                 reply,
                 source: "gemini".into(),
                 action: None,
+                opened_url: None,
             })
         }
         Err(e) => Err(e),
@@ -172,23 +196,67 @@ fn set_gemini_key(key: String, state: tauri::State<'_, AppState>) -> Result<(), 
     state.db.set_config("gemini_api_key", &key).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_music_url(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
+    state.db.get_config("music_playlist_url").map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_music_url(url: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.db.set_config("music_playlist_url", &url).map_err(|e| e.to_string())
+}
+
+/// Show the always-on-top wake overlay for 2 seconds, then auto-hide it.
+#[tauri::command]
+fn show_wake_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        overlay.show().map_err(|e| e.to_string())?;
+        let o = overlay.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(2200));
+            let _ = o.hide();
+        });
+    }
+    Ok(())
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {
-            // Hide the main window — it will appear on tray click
+            // ── Overlay window (always-on-top badge, shown on wake word) ──
+            #[cfg(debug_assertions)]
+            let overlay_url = tauri::WebviewUrl::External(
+                "http://localhost:1420/overlay.html"
+                    .parse()
+                    .expect("overlay url"),
+            );
+            #[cfg(not(debug_assertions))]
+            let overlay_url = tauri::WebviewUrl::App(std::path::PathBuf::from("overlay.html"));
+
+            let _ = tauri::WebviewWindowBuilder::new(app, "overlay", overlay_url)
+                .title("")
+                .inner_size(220.0, 56.0)
+                .position(16.0, 16.0)
+                .decorations(false)
+                .always_on_top(true)
+                .resizable(false)
+                .visible(false)
+                .skip_taskbar(true)
+                .build();
+
+            // ── Hide the main window — appears on tray click ──────────────
             if let Some(window) = app.get_webview_window("main") {
                 window.hide()?;
             }
 
-            // Build tray context menu
+            // ── Build tray context menu ───────────────────────────────────
             let show = MenuItem::with_id(app, "show", "Show david", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
 
-            // Create tray icon
             TrayIconBuilder::new()
                 .tooltip("david")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -199,7 +267,6 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    // Left-click toggles the window
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
@@ -230,6 +297,9 @@ pub fn run() {
             get_stats,
             get_gemini_key,
             set_gemini_key,
+            get_music_url,
+            set_music_url,
+            show_wake_overlay,
         ])
         .run(tauri::generate_context!())
         .expect("error while running david");

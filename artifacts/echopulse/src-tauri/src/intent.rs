@@ -6,6 +6,8 @@ pub struct RouterMatch {
     pub pattern: String,
     pub action: String,
     pub reply: String,
+    /// URL to open in the default browser (for play intents)
+    pub open_url: Option<String>,
     /// For task_add: the text of the new task
     pub task_text: Option<String>,
     /// For preference tracking: (category, platform)
@@ -38,6 +40,9 @@ static RE_PLAY_SPOTIFY: Lazy<Regex> = Lazy::new(|| {
 static RE_PLAY_YOUTUBE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bplay (.+?) on youtube( music)?\b").unwrap()
 });
+static RE_PLAY_FAVS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bplay (my )?(favourites?|favorites?|my playlist|my music|something)\b").unwrap()
+});
 static RE_PLAY_GENERIC: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bplay (.+)").unwrap()
 });
@@ -57,6 +62,16 @@ static RE_JOKE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(tell me a joke|joke)\b").unwrap()
 });
 
+fn yt_music_url(query: &str) -> String {
+    let encoded = query.trim().replace(' ', "+");
+    format!("https://music.youtube.com/search?q={}", encoded)
+}
+
+fn spotify_url(query: &str) -> String {
+    let encoded = query.trim().replace(' ', "%20");
+    format!("https://open.spotify.com/search/{}", encoded)
+}
+
 // ── Router ────────────────────────────────────────────────────────────────────
 
 pub fn route(query: &str) -> Option<RouterMatch> {
@@ -66,10 +81,8 @@ pub fn route(query: &str) -> Option<RouterMatch> {
         return Some(RouterMatch {
             pattern: "time".into(),
             action: "time".into(),
-            reply: format!(
-                "The current time is {}.",
-                now.format("%I:%M %p")
-            ),
+            reply: format!("The current time is {}.", now.format("%I:%M %p")),
+            open_url: None,
             task_text: None,
             preference: None,
         });
@@ -81,10 +94,8 @@ pub fn route(query: &str) -> Option<RouterMatch> {
         return Some(RouterMatch {
             pattern: "date".into(),
             action: "date".into(),
-            reply: format!(
-                "Today is {}.",
-                now.format("%A, %B %-d, %Y")
-            ),
+            reply: format!("Today is {}.", now.format("%A, %B %-d, %Y")),
+            open_url: None,
             task_text: None,
             preference: None,
         });
@@ -97,6 +108,7 @@ pub fn route(query: &str) -> Option<RouterMatch> {
             pattern: "task_add_1".into(),
             action: "task_add".into(),
             reply: format!("Added \"{}\" to your task list.", text),
+            open_url: None,
             task_text: Some(text),
             preference: None,
         });
@@ -109,6 +121,7 @@ pub fn route(query: &str) -> Option<RouterMatch> {
             pattern: "task_add_2".into(),
             action: "task_add".into(),
             reply: format!("Added \"{}\" to your task list.", text),
+            open_url: None,
             task_text: Some(text),
             preference: None,
         });
@@ -120,6 +133,7 @@ pub fn route(query: &str) -> Option<RouterMatch> {
             pattern: "task_list".into(),
             action: "task_list".into(),
             reply: "Here are your current tasks.".into(),
+            open_url: None,
             task_text: None,
             preference: None,
         });
@@ -132,6 +146,7 @@ pub fn route(query: &str) -> Option<RouterMatch> {
             pattern: "task_complete".into(),
             action: "task_complete".into(),
             reply: format!("Marked \"{}\" as complete.", text),
+            open_url: None,
             task_text: Some(text),
             preference: None,
         });
@@ -139,32 +154,53 @@ pub fn route(query: &str) -> Option<RouterMatch> {
 
     // Spotify
     if let Some(caps) = RE_PLAY_SPOTIFY.captures(query) {
+        let q = caps[1].to_string();
+        let url = spotify_url(&q);
         return Some(RouterMatch {
             pattern: "play_spotify".into(),
             action: "play_spotify".into(),
-            reply: format!("Playing \"{}\" on Spotify.", &caps[1]),
+            reply: format!("Opening Spotify and searching for \"{}\".", q),
+            open_url: Some(url),
             task_text: None,
             preference: Some(("music".into(), "spotify".into())),
         });
     }
 
-    // YouTube
+    // YouTube Music (explicit)
     if let Some(caps) = RE_PLAY_YOUTUBE.captures(query) {
+        let q = caps[1].to_string();
+        let url = yt_music_url(&q);
         return Some(RouterMatch {
             pattern: "play_youtube".into(),
             action: "play_youtube".into(),
-            reply: format!("Playing \"{}\" on YouTube Music.", &caps[1]),
+            reply: format!("Opening YouTube Music and searching for \"{}\".", q),
+            open_url: Some(url),
             task_text: None,
             preference: Some(("music".into(), "youtube".into())),
         });
     }
 
-    // Generic play
+    // Play favourites / playlist — URL resolved in lib.rs from stored setting
+    if RE_PLAY_FAVS.is_match(query) {
+        return Some(RouterMatch {
+            pattern: "play_favs".into(),
+            action: "play_favourites".into(),
+            reply: "Opening your favourite playlist.".into(),
+            open_url: None, // filled in by lib.rs using stored music URL
+            task_text: None,
+            preference: None,
+        });
+    }
+
+    // Generic play → YouTube Music search
     if let Some(caps) = RE_PLAY_GENERIC.captures(query) {
+        let q = caps[1].to_string();
+        let url = yt_music_url(&q);
         return Some(RouterMatch {
             pattern: "play_music".into(),
             action: "play_music".into(),
-            reply: format!("Playing \"{}\".", &caps[1]),
+            reply: format!("Opening YouTube Music and searching for \"{}\".", q),
+            open_url: Some(url),
             task_text: None,
             preference: None,
         });
@@ -185,6 +221,7 @@ pub fn route(query: &str) -> Option<RouterMatch> {
             pattern: "volume".into(),
             action: "volume".into(),
             reply,
+            open_url: None,
             task_text: None,
             preference: None,
         });
@@ -196,6 +233,7 @@ pub fn route(query: &str) -> Option<RouterMatch> {
             pattern: "clear".into(),
             action: "clear_screen".into(),
             reply: "Screen cleared.".into(),
+            open_url: None,
             task_text: None,
             preference: None,
         });
@@ -204,17 +242,12 @@ pub fn route(query: &str) -> Option<RouterMatch> {
     // Greeting
     if RE_GREET.is_match(query) {
         let hour = chrono::Local::now().hour();
-        let period = if hour < 12 {
-            "morning"
-        } else if hour < 17 {
-            "afternoon"
-        } else {
-            "evening"
-        };
+        let period = if hour < 12 { "morning" } else if hour < 17 { "afternoon" } else { "evening" };
         return Some(RouterMatch {
             pattern: "greeting".into(),
             action: "greeting".into(),
             reply: format!("Good {}! I'm david. How can I help you today?", period),
+            open_url: None,
             task_text: None,
             preference: None,
         });
@@ -225,7 +258,8 @@ pub fn route(query: &str) -> Option<RouterMatch> {
         return Some(RouterMatch {
             pattern: "help".into(),
             action: "help".into(),
-            reply: "I can handle time, date, tasks, music, and volume locally. Anything else goes to Gemini AI.".into(),
+            reply: "I can play music, check time/date, manage tasks, and answer questions. Say \"play [song] on Spotify\" or \"play [song] on YouTube Music\". Anything else goes to Gemini AI.".into(),
+            open_url: None,
             task_text: None,
             preference: None,
         });
@@ -237,6 +271,7 @@ pub fn route(query: &str) -> Option<RouterMatch> {
             pattern: "joke".into(),
             action: "joke".into(),
             reply: "Why do programmers prefer dark mode? Because light attracts bugs.".into(),
+            open_url: None,
             task_text: None,
             preference: None,
         });
